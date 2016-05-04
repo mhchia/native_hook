@@ -177,6 +177,7 @@ struct soinfo {
   char old_name_[SOINFO_NAME_LEN];
 #endif
  public:
+  // programmer++ p.165
   const ElfW(Phdr)* phdr;
   size_t phnum;
   ElfW(Addr) entry;

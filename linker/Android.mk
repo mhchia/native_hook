@@ -35,6 +35,8 @@ LOCAL_CFLAGS += \
     -fvisibility=hidden \
     -Wall -Wextra -Wunused -Werror \
 
+LOCAL_CFLAGS += -DLINKER_DEBUG=1
+
 LOCAL_CFLAGS_arm += -D__work_around_b_19059885__
 LOCAL_CFLAGS_x86 += -D__work_around_b_19059885__
 
