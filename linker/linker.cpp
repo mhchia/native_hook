@@ -1559,20 +1559,21 @@ static bool find_libraries(soinfo* start_with, const char* const library_names[]
       si->increment_ref_count();
     }
 
-    soinfo* so_hooking_lib = nullptr;
     // XXX: workaround, due to the fact that libs with the same
     // basename are not necessarily the same.
     // E.g. /system/lib/libm.so and /data/.../my_app/lib/libm.so
     if (nht && (std::string(basename(task->get_name())) == basename(nht->get_hooked_lib_name()))) {
-      so_hooking_lib = find_library_internal(load_tasks, nht->get_hooking_lib_name(), rtld_flags, extinfo);
-      nht->set_hooked_so(si);
-      nht->set_hooking_so(so_hooking_lib);
-      DL_WARN("[NATIVE HOOK] LOAD hooking_lib, full %s : base %s\n", nht->get_hooking_lib_name(), basename(nht->get_hooking_lib_name()));
-      if (needed_by != nullptr) {
-        needed_by->add_child(so_hooking_lib);
-      }
-      if (so_hooking_lib->is_linked()) {
-        so_hooking_lib->increment_ref_count();
+      soinfo* so_hooking_lib = find_library_internal(load_tasks, nht->get_hooking_lib_name(), rtld_flags, extinfo);
+      if (so_hooking_lib) {
+        nht->set_hooked_so(si);
+        nht->set_hooking_so(so_hooking_lib);
+        DL_WARN("[NATIVE HOOK] LOAD hooking_lib, full %s : base %s\n", nht->get_hooking_lib_name(), basename(nht->get_hooking_lib_name()));
+        si->add_child(so_hooking_lib);
+        if (so_hooking_lib->is_linked()) {
+          so_hooking_lib->increment_ref_count();
+        }
+      } else {
+        DL_WARN("[NATIVE HOOK] FAILED TO LOAD hooking_lib, full %s : base %s\n", nht->get_hooking_lib_name(), basename(nht->get_hooking_lib_name()));
       }
     }
 
@@ -1587,13 +1588,16 @@ static bool find_libraries(soinfo* start_with, const char* const library_names[]
       ld_preloads->push_back(si);
     }
 
-    // XXX : wtf is it ?
+    // TODO : I get it, we only need to record the trees roots in soinfos.
+    //        In dlopen(), we only need to push the lib in soinfos only.
+    //        In normal dynamic linking, we only need to push the dt_needed lib
+    //        in soinfos.
+    //        Then, build up the dependency trees.
+    //        Then, in the step 2 first walk_dependencies_tree(),
+    //        all .so in the dependency trees will be pushed
+    //        into the local_group in BFS order.
     if (soinfos_count < library_names_count) {
       soinfos[soinfos_count++] = si;
-    }
-    // XXX : workaround
-    if (so_hooking_lib && soinfos_count < library_names_count) {
-      soinfos[soinfos_count++] = so_hooking_lib;
     }
   }
 

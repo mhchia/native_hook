@@ -121,11 +121,12 @@ void* dlsym(void* handle, const char* symbol) {
       // XXX : this is a nasty workaround, due to the fact that
       //       the following annotated line results in segmentation fault
       //       when we try to call the symbol.
+      /*
       void* hooking_lib_handle = dlopen(nht->get_hooking_lib_name(), RTLD_NOW);
       sym = dlsym_handle_lookup(reinterpret_cast<soinfo*>(hooking_lib_handle), &found, symbol);
-//      sym = dlsym_handle_lookup(nht->get_hooking_so(), &found, symbol);
+      */
+      sym = dlsym_handle_lookup(nht->get_hooking_so(), &found, symbol);
       DL_WARN("[NATIVE HOOK] %s : symbol = %s, handle == others, (lib_from_nht=%p)\n", __func__, symbol, reinterpret_cast<void*>(nht->get_hooking_so()));
-      DL_WARN("[NATIVE HOOK] %s : symbol = %s, handle == others, (lib_from_dlopen=%p)\n", __func__, symbol, hooking_lib_handle);
     } else {
       sym = dlsym_handle_lookup(so, &found, symbol);
     }
