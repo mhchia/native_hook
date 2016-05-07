@@ -31,6 +31,8 @@
 
 /* This file hijacks the symbols stubbed out in libdl.so. */
 
+extern NativeHookTable* nht;
+
 static pthread_mutex_t g_dl_mutex = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
 
 static const char* __bionic_set_dlerror(char* new_value) {
@@ -110,14 +112,31 @@ void* dlsym(void* handle, const char* symbol) {
 
   if (handle == RTLD_DEFAULT || handle == RTLD_NEXT) {
     sym = dlsym_linear_lookup(symbol, &found, caller, handle);
+    DL_WARN("[NATIVE HOOK] %s : symbol = %s, handle == RTLD_DEFAULT or RTLD_NEXT", __func__, symbol);
   } else {
-    sym = dlsym_handle_lookup(reinterpret_cast<soinfo*>(handle), &found, symbol);
+    soinfo* so = reinterpret_cast<soinfo*>(handle);
+    if (nht &&
+        std::string(basename(so->get_realpath())) == basename(nht->get_hooked_lib_name()) &&
+        nht->is_target_symbol(symbol)) {
+      // XXX : this is a nasty workaround, due to the fact that
+      //       the following annotated line results in segmentation fault
+      //       when we try to call the symbol.
+      void* hooking_lib_handle = dlopen(nht->get_hooking_lib_name(), RTLD_NOW);
+      sym = dlsym_handle_lookup(reinterpret_cast<soinfo*>(hooking_lib_handle), &found, symbol);
+//      sym = dlsym_handle_lookup(nht->get_hooking_so(), &found, symbol);
+      DL_WARN("[NATIVE HOOK] %s : symbol = %s, handle == others, (lib_from_nht=%p)\n", __func__, symbol, reinterpret_cast<void*>(nht->get_hooking_so()));
+      DL_WARN("[NATIVE HOOK] %s : symbol = %s, handle == others, (lib_from_dlopen=%p)\n", __func__, symbol, hooking_lib_handle);
+    } else {
+      sym = dlsym_handle_lookup(so, &found, symbol);
+    }
   }
 
   if (sym != nullptr) {
     unsigned bind = ELF_ST_BIND(sym->st_info);
 
+    // st_shndx != 0 means that this symbol is not undefined.
     if ((bind == STB_GLOBAL || bind == STB_WEAK) && sym->st_shndx != 0) {
+        DL_WARN("[NATIVE HOOK] %s : returned successfully, sym_offset=%p, symbol_addr=%p\n", __func__, reinterpret_cast<void*>(sym->st_value), reinterpret_cast<void*>(found->resolve_symbol_address(sym)));
       return reinterpret_cast<void*>(found->resolve_symbol_address(sym));
     }
 

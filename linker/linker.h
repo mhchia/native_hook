@@ -401,6 +401,85 @@ struct soinfo {
   friend soinfo* get_libdl_info();
 };
 
+struct SoinfoSymbol
+{
+    const std::string lib_name;
+    soinfo* so;
+    const ElfW(Sym)* symbol;
+
+    SoinfoSymbol(const char* name,
+                 soinfo* so = nullptr,
+                 const ElfW(Sym)* symbol = nullptr) :\
+        lib_name(name), so(so), symbol(symbol) {}
+};
+
+class NativeHookTable
+{
+public:
+    NativeHookTable(const std::string& hooked_lib,
+                    const std::string& hooking_lib,
+                    const std::string& symbol_name) :\
+        hooked_(hooked_lib.c_str()),
+        hooking_(hooking_lib.c_str()),
+        symbol_name_(symbol_name) {}
+
+    void test(const std::string& name, soinfo* so, const ElfW(Sym)* s) {
+        if (name != symbol_name_) {
+            return;
+        }
+        std::string lib_name(so->get_realpath());
+        if (hooked_.lib_name == lib_name and hooked_.symbol == nullptr) {
+            hooked_.so = so;
+            hooked_.symbol = s;
+        }
+        if (hooking_.lib_name == lib_name and hooking_.symbol == nullptr) {
+            hooking_.so = so;
+            hooking_.symbol = s;
+        }
+    }
+    bool is_target_symbol(const std::string& s)
+    {
+        return s == symbol_name_;
+    }
+    bool is_hooked_lib(soinfo* so)
+    {
+        return hooked_.lib_name == so->get_realpath();
+    }
+    bool is_hooking_lib(soinfo* so)
+    {
+        return hooking_.lib_name == so->get_realpath();
+    }
+    const char* get_hooked_lib_name()
+    {
+        return hooked_.lib_name.c_str();
+    }
+    const char* get_hooking_lib_name()
+    {
+        return hooking_.lib_name.c_str();
+    }
+    void set_hooked_so(soinfo* s)
+    {
+        hooked_.so = s;
+    }
+    void set_hooking_so(soinfo* s)
+    {
+        hooking_.so = s;
+    }
+    soinfo* get_hooked_so()
+    {
+        return hooked_.so;
+    }
+    soinfo* get_hooking_so()
+    {
+        return hooking_.so;
+    }
+
+private:
+    SoinfoSymbol hooked_;
+    SoinfoSymbol hooking_;
+    const std::string symbol_name_;
+};
+
 bool soinfo_do_lookup(soinfo* si_from, const char* name, const version_info* vi,
                       soinfo** si_found_in, const soinfo::soinfo_list_t& global_group,
                       const soinfo::soinfo_list_t& local_group, const ElfW(Sym)** symbol);

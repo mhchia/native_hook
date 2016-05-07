@@ -135,70 +135,8 @@ static pthread_mutex_t g__r_debug_mutex = PTHREAD_MUTEX_INITIALIZER;
 static r_debug _r_debug =
     {1, nullptr, reinterpret_cast<uintptr_t>(&rtld_db_dlactivity), r_debug::RT_CONSISTENT, 0};
 
-struct SoinfoSymbol
-{
-    const std::string lib_name;
-    soinfo* so;
-    const ElfW(Sym)* symbol;
-
-    SoinfoSymbol(const char* name,
-                 soinfo* so = nullptr,
-                 const ElfW(Sym)* symbol = nullptr) :\
-        lib_name(name), so(so), symbol(symbol) {}
-};
-
-class NativeHookTable
-{
-public:
-    NativeHookTable(const std::string& hooked_lib,
-                    const std::string& hooking_lib,
-                    const std::string& symbol_name) :\
-        hooked_(hooked_lib.c_str()),
-        hooking_(hooking_lib.c_str()),
-        symbol_name_(symbol_name) {}
-
-    void test(const std::string& name, soinfo* so, const ElfW(Sym)* s) {
-        if (name != symbol_name_) {
-            return;
-        }
-        std::string lib_name(so->get_realpath());
-        if (hooked_.lib_name == lib_name and hooked_.symbol == nullptr) {
-            hooked_.so = so;
-            hooked_.symbol = s;
-        }
-        if (hooking_.lib_name == lib_name and hooking_.symbol == nullptr) {
-            hooking_.so = so;
-            hooking_.symbol = s;
-        }
-    }
-    bool is_target_symbol(const std::string& s)
-    {
-        return s == symbol_name_;
-    }
-    bool is_hooked_lib(soinfo* so)
-    {
-        return hooked_.lib_name == so->get_realpath();
-    }
-    bool is_hooking_lib(soinfo* so)
-    {
-        return hooked_.lib_name == so->get_realpath();
-    }
-    const char* get_hooked_lib_name()
-    {
-        return hooked_.lib_name.c_str();
-    }
-    const char* get_hooking_lib_name()
-    {
-        return hooking_.lib_name.c_str();
-    }
-
-private:
-    SoinfoSymbol hooked_;
-    SoinfoSymbol hooking_;
-    const std::string symbol_name_;
-};
-
 NativeHookTable* nht = nullptr;
+
 typedef std::vector<std::vector<std::string> > NativeHookFile;
 
 
@@ -791,7 +729,7 @@ bool soinfo_do_lookup(soinfo* si_from, const char* name, const version_info* vi,
     global_group.visit([&](soinfo* global_si) {
       DEBUG("%s: looking up %s in %s (from global group)",
           si_from->get_realpath(), name, global_si->get_realpath());
-      if (nht && nht->is_target_symbol(name) && nht->is_hooked_lib(global_si)) {
+      if (nht && nht->is_target_symbol(name) && (nht->is_hooked_lib(global_si) || !nht->is_hooking_lib(global_si))) {
           DL_WARN("[SKIPPED BY NATIVE HOOK] %s: looking up %s in %s (from global group)",
               si_from->get_realpath(), name, global_si->get_realpath());
           return true;
@@ -826,8 +764,8 @@ bool soinfo_do_lookup(soinfo* si_from, const char* name, const version_info* vi,
 
       DEBUG("%s: looking up %s in %s (from local group)",
           si_from->get_realpath(), name, local_si->get_realpath());
-      if (nht && nht->is_target_symbol(name) && nht->is_hooked_lib(local_si)) {
-          DL_WARN("[SKIPPED BY NATIVE HOOK] %s: looking up %s in %s (from global group)",
+      if (nht && nht->is_target_symbol(name) && (nht->is_hooked_lib(local_si) || !nht->is_hooking_lib(local_si))) {
+          DL_WARN("[SKIPPED BY NATIVE HOOK] %s: looking up %s in %s (from local group)",
               si_from->get_realpath(), name, local_si->get_realpath());
           return true;
       }
@@ -1004,8 +942,10 @@ static bool walk_dependencies_tree(soinfo* root_soinfos[], size_t root_soinfos_s
 static const ElfW(Sym)* dlsym_handle_lookup(soinfo* root, soinfo* skip_until,
                                             soinfo** found, SymbolName& symbol_name) {
   const ElfW(Sym)* result = nullptr;
+  // in dlsym = false
   bool skip_lookup = skip_until != nullptr;
 
+  // only walk the dlopen loaded so and it's children(?!).
   walk_dependencies_tree(&root, 1, [&](soinfo* current_soinfo) {
     if (skip_lookup) {
       skip_lookup = current_soinfo != skip_until;
@@ -1326,7 +1266,7 @@ static soinfo* load_library(int fd, off64_t file_offset,
                             LoadTaskList& load_tasks,
                             const char* name, int rtld_flags,
                             const android_dlextinfo* extinfo) {
-  DL_WARN("[NATIVE HOOK] %s : %s : %s\n", __FILE__, __func__, name);
+  DL_WARN("[NATIVE HOOK] %s : %s\n", __func__, name);
   if ((file_offset % PAGE_SIZE) != 0) {
     DL_ERR("file offset for the library \"%s\" is not page-aligned: %" PRId64, name, file_offset);
     return nullptr;
@@ -1464,7 +1404,7 @@ static bool find_loaded_library_by_soname(const char* name, soinfo** candidate) 
 
 static soinfo* find_library_internal(LoadTaskList& load_tasks, const char* name,
                                      int rtld_flags, const android_dlextinfo* extinfo) {
-  DL_WARN("[NATIVE HOOK] %s : %s : %s\n", __FILE__, __func__, name);
+  DL_WARN("[NATIVE HOOK] %s : %s\n", __func__, name);
   soinfo* candidate;
 
   if (find_loaded_library_by_soname(name, &candidate)) {
@@ -1520,7 +1460,7 @@ static bool find_libraries(soinfo* start_with, const char* const library_names[]
    *    - somain
    *    - null
    * @library_names and library_names_count
-   *    - needed_libraries
+   *    - dt_needed_libraries by the somain
    *    - the dlopen library
    * @soinfos
    *    - nullptr
@@ -1532,27 +1472,38 @@ static bool find_libraries(soinfo* start_with, const char* const library_names[]
    *    - nullptr
    *    - extinfo from dlopen()
    */
+
+//  bool has_hooked_lib = false;
   // Step 0: prepare.
   LoadTaskList load_tasks;
   for (size_t i = 0; i < library_names_count; ++i) {
     const char* name = library_names[i];
-    DL_WARN("[NATIVE HOOK] %s : %s : library_names[%d] = %s\n", __FILE__, __func__, i, name);
     // LoadTask is a structure that record the task name(library_name),
     // and the needed_by(i.e. this .so is needed by whom).
     // In this case, all needed by @start_with.
     load_tasks.push_back(LoadTask::create(name, start_with));
+    /*
+    // XXX: workaround, due to the fact that libs with the same
+    // basename are not necessarily the same.
+    // E.g. /system/lib/libm.so and /data/.../my_app/lib/libm.so
+    if (nht && (std::string(basename(name)) == basename(nht->get_hooked_lib_name()))) {
+      has_hooked_lib = true;
+      DL_WARN("[NATIVE HOOK] FOUND hooked_lib, full %s : base %s\n", nht->get_hooked_lib_name(), basename(nht->get_hooked_lib_name()));
+    }
+    */
   }
 
-  /*
   // !@# test for native hook
   // if /system/lib/libhook.so doesn't exist, in the following
   // find_libraries will fail to find libhook.so.
   // Then, the /system/bin/sh and the others important executable fails.
   // Therefore, system crash, then you need to flash system without
   // this "if (true) ..." to prevent boot correctly.
-  if (nht and start_with) {
+  /*
+  if (nht and has_hooked_lib) {
     load_tasks.push_back(LoadTask::create(nht->get_hooking_lib_name(), start_with));
     ++library_names_count;
+    DL_WARN("[NATIVE HOOK] PUSHED hooking_lib, full %s : base %s\n", nht->get_hooking_lib_name(), basename(nht->get_hooking_lib_name()));
   }
   */
 
@@ -1593,19 +1544,36 @@ static bool find_libraries(soinfo* start_with, const char* const library_names[]
       task.get() != nullptr; task.reset(load_tasks.pop_front())) {
     // load_tasks passed to find_library_internal, load_libraries,
     // and will be pushed all dt_needed .so in BFS order.
+    DL_WARN("[NATIVE HOOK] %s : loading lib %s\n", __func__, task->get_name());
     soinfo* si = find_library_internal(load_tasks, task->get_name(), rtld_flags, extinfo);
     if (si == nullptr) {
       return false;
     }
 
     soinfo* needed_by = task->get_needed_by();
-
     if (needed_by != nullptr) {
       needed_by->add_child(si);
     }
 
     if (si->is_linked()) {
       si->increment_ref_count();
+    }
+
+    soinfo* so_hooking_lib = nullptr;
+    // XXX: workaround, due to the fact that libs with the same
+    // basename are not necessarily the same.
+    // E.g. /system/lib/libm.so and /data/.../my_app/lib/libm.so
+    if (nht && (std::string(basename(task->get_name())) == basename(nht->get_hooked_lib_name()))) {
+      so_hooking_lib = find_library_internal(load_tasks, nht->get_hooking_lib_name(), rtld_flags, extinfo);
+      nht->set_hooked_so(si);
+      nht->set_hooking_so(so_hooking_lib);
+      DL_WARN("[NATIVE HOOK] LOAD hooking_lib, full %s : base %s\n", nht->get_hooking_lib_name(), basename(nht->get_hooking_lib_name()));
+      if (needed_by != nullptr) {
+        needed_by->add_child(so_hooking_lib);
+      }
+      if (so_hooking_lib->is_linked()) {
+        so_hooking_lib->increment_ref_count();
+      }
     }
 
     // When ld_preloads is not null, the first
@@ -1619,8 +1587,13 @@ static bool find_libraries(soinfo* start_with, const char* const library_names[]
       ld_preloads->push_back(si);
     }
 
+    // XXX : wtf is it ?
     if (soinfos_count < library_names_count) {
       soinfos[soinfos_count++] = si;
+    }
+    // XXX : workaround
+    if (so_hooking_lib && soinfos_count < library_names_count) {
+      soinfos[soinfos_count++] = so_hooking_lib;
     }
   }
 
@@ -1664,7 +1637,7 @@ static bool find_libraries(soinfo* start_with, const char* const library_names[]
 }
 
 static soinfo* find_library(const char* name, int rtld_flags, const android_dlextinfo* extinfo) {
-  DL_WARN("[NATIVE HOOK] %s : %s : %s\n", __FILE__, __func__, name);
+  DL_WARN("[NATIVE HOOK] %s : %s\n", __func__, name);
   soinfo* si;
 
   if (name == nullptr) {
@@ -1794,7 +1767,7 @@ void do_android_update_LD_LIBRARY_PATH(const char* ld_library_path) {
 }
 
 soinfo* do_dlopen(const char* name, int flags, const android_dlextinfo* extinfo) {
-  DL_WARN("[NATIVE HOOK] %s : %s : %s\n", __FILE__, __func__, name);
+  DL_WARN("[NATIVE HOOK] %s : %s\n", __func__, name);
   if ((flags & ~(RTLD_NOW|RTLD_LAZY|RTLD_LOCAL|RTLD_GLOBAL|RTLD_NODELETE|RTLD_NOLOAD)) != 0) {
     DL_ERR("invalid flags to dlopen: %x", flags);
     return nullptr;
@@ -3314,6 +3287,7 @@ bool parse_native_hook_file(NativeHookFile& nh_items,
     }
     if (temp.size() != 3) {
       DL_WARN("[NATIVE HOOK] %s : %uth line in nh_file is not complete thus skipped.\n", __func__, i);
+      continue;
     }
     nh_items.push_back(temp);
   }
@@ -3358,6 +3332,10 @@ bool init_native_hook_table()
     return false;
   }
 
+  if (nht) {
+    free(nht);
+    nht = nullptr;
+  }
   nht = new NativeHookTable(hooked_lib, hooking_lib, symbol);
   //nht = nullptr;
   return true;
@@ -3371,7 +3349,7 @@ extern "C" int __system_properties_init(void);
  * and other non-local data at this point.
  */
 static ElfW(Addr) __linker_init_post_relocation(KernelArgumentBlock& args, ElfW(Addr) linker_base) {
-  DL_WARN("[NATIVE HOOK] : %s : %s\n", __FILE__, __func__);
+  DL_WARN("[NATIVE HOOK] : %s\n", __func__);
 #if TIMING
   struct timeval t0, t1;
   gettimeofday(&t0, 0);
@@ -3476,8 +3454,6 @@ static ElfW(Addr) __linker_init_post_relocation(KernelArgumentBlock& args, ElfW(
     DL_WARN("[NATIVE HOOK] : %s init_native_hook_table() failed\n", __func__);
   }
 
-  bool has_hooked_lib = false;
-
   // add somain to global group
   si->set_dt_flags_1(si->get_dt_flags_1() | DF_1_GLOBAL);
 
@@ -3487,27 +3463,16 @@ static ElfW(Addr) __linker_init_post_relocation(KernelArgumentBlock& args, ElfW(
   size_t ld_preloads_count = 0;
 
   for (const auto& ld_preload_name : g_ld_preload_names) {
-    if (ld_preload_name == nht->get_hooked_lib_name()) {
-      has_hooked_lib = true;
-    }
     needed_library_name_list.push_back(ld_preload_name.c_str());
     ++needed_libraries_count;
     ++ld_preloads_count;
   }
 
+  // find the needed libraries for the somain
   for_each_dt_needed(si, [&](const char* name) {
-    if (nht->get_hooked_lib_name() == name) {
-      has_hooked_lib = true;
-    }
     needed_library_name_list.push_back(name);
     ++needed_libraries_count;
   });
-
-  if (has_hooked_lib && nht) {
-    // Add the libhook.so into library set before all needed .so
-    needed_library_name_list.push_back(nht->get_hooking_lib_name());
-    ++needed_libraries_count;
-  }
 
   const char* needed_library_names[needed_libraries_count];
 
