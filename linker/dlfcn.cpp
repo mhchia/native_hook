@@ -71,8 +71,7 @@ void android_update_LD_LIBRARY_PATH(const char* ld_library_path) {
 
 static void* dlopen_ext(const char* filename, int flags, const android_dlextinfo* extinfo) {
   ScopedPthreadMutexLocker locker(&g_dl_mutex);
-//  flags = RTLD_NOW;
-  DL_WARN("[NATIVE HOOK] %s : %s : %s\n", __FILE__, __func__, filename);
+  DL_WARN("[NATIVE HOOK] %s : %s\n", __func__, filename);
   soinfo* result = do_dlopen(filename, flags, extinfo);
   if (result == nullptr) {
     DL_WARN("[NATIVE HOOK] dlopen failed : %s\n", filename);

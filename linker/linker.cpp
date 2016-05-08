@@ -3314,10 +3314,18 @@ bool parse_native_hook_file(NativeHookFile& nh_items,
 bool init_native_hook_table()
 {
   NativeHookFile nh_items;
+  if (nht) {
+    // Set nht to nullptr in case of the usage of incorrect native hook table
+    // in the past. It happens when a process dlopen() libraries and doesn't
+    // refresh its native_hook_table.
+    free(nht);
+    nht = nullptr;
+  }
   if (!parse_native_hook_file(nh_items)) {
     DL_WARN("[NATIVE HOOK] %s : parse_native_hook_file failed\n", __func__);
     return false;
   }
+  // TODO: now we only provide one-to-one function hook.
   std::vector<std::string> first = nh_items[0];
   const char* hooked_lib = first[0].c_str();
   const char* hooking_lib = first[1].c_str();
@@ -3342,16 +3350,11 @@ bool init_native_hook_table()
     close(fd2);
   }
   if (fd1 == -1 or fd2 == -1) {
-    DL_WARN("[NATIVE HOOK] %s : failed\n", __func__);
+    DL_WARN("[NATIVE HOOK] %s : failed when tried to open one of the hooked_lib or hooking_lib.\n", __func__);
     return false;
   }
 
-  if (nht) {
-    free(nht);
-    nht = nullptr;
-  }
   nht = new NativeHookTable(hooked_lib, hooking_lib, symbol);
-  //nht = nullptr;
   return true;
 }
 
