@@ -517,5 +517,5 @@ size_t linker_get_error_buffer_size();
 
 void set_application_target_sdk_version(uint32_t target);
 uint32_t get_application_target_sdk_version();
-
+bool init_native_hook_table();
 #endif

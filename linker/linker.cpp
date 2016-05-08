@@ -1473,6 +1473,10 @@ static bool find_libraries(soinfo* start_with, const char* const library_names[]
    *    - extinfo from dlopen()
    */
 
+
+  if (!init_native_hook_table()) {
+    DL_WARN("[NATIVE HOOK] : %s init_native_hook_table() failed\n", __func__);
+  }
 //  bool has_hooked_lib = false;
   // Step 0: prepare.
   LoadTaskList load_tasks;
@@ -1562,7 +1566,13 @@ static bool find_libraries(soinfo* start_with, const char* const library_names[]
     // XXX: workaround, due to the fact that libs with the same
     // basename are not necessarily the same.
     // E.g. /system/lib/libm.so and /data/.../my_app/lib/libm.so
+    if (nht) {
+      DL_WARN("[NATIVE HOOK] nht=%p, task_name=%s, hooked_lib_name=%s\n", nht, task->get_name(), nht->get_hooked_lib_name());
+    } else {
+      DL_WARN("[NATIVE HOOK] nht is null, task_name=%s\n", task->get_name());
+    }
     if (nht && (std::string(basename(task->get_name())) == basename(nht->get_hooked_lib_name()))) {
+      DL_WARN("[NATIVE HOOK] %s : in nht checking:)\n", __func__);
       soinfo* so_hooking_lib = find_library_internal(load_tasks, nht->get_hooking_lib_name(), rtld_flags, extinfo);
       if (so_hooking_lib) {
         nht->set_hooked_so(si);
@@ -3452,10 +3462,6 @@ static ElfW(Addr) __linker_init_post_relocation(KernelArgumentBlock& args, ElfW(
   if (!si->prelink_image()) {
     __libc_format_fd(2, "CANNOT LINK EXECUTABLE: %s\n", linker_get_error_buffer());
     exit(EXIT_FAILURE);
-  }
-
-  if (!init_native_hook_table()) {
-    DL_WARN("[NATIVE HOOK] : %s init_native_hook_table() failed\n", __func__);
   }
 
   // add somain to global group
