@@ -1473,11 +1473,10 @@ static bool find_libraries(soinfo* start_with, const char* const library_names[]
    *    - extinfo from dlopen()
    */
 
-
   if (!init_native_hook_table()) {
     DL_WARN("[NATIVE HOOK] : %s init_native_hook_table() failed\n", __func__);
   }
-//  bool has_hooked_lib = false;
+
   // Step 0: prepare.
   LoadTaskList load_tasks;
   for (size_t i = 0; i < library_names_count; ++i) {
@@ -1486,30 +1485,7 @@ static bool find_libraries(soinfo* start_with, const char* const library_names[]
     // and the needed_by(i.e. this .so is needed by whom).
     // In this case, all needed by @start_with.
     load_tasks.push_back(LoadTask::create(name, start_with));
-    /*
-    // XXX: workaround, due to the fact that libs with the same
-    // basename are not necessarily the same.
-    // E.g. /system/lib/libm.so and /data/.../my_app/lib/libm.so
-    if (nht && (std::string(basename(name)) == basename(nht->get_hooked_lib_name()))) {
-      has_hooked_lib = true;
-      DL_WARN("[NATIVE HOOK] FOUND hooked_lib, full %s : base %s\n", nht->get_hooked_lib_name(), basename(nht->get_hooked_lib_name()));
-    }
-    */
   }
-
-  // !@# test for native hook
-  // if /system/lib/libhook.so doesn't exist, in the following
-  // find_libraries will fail to find libhook.so.
-  // Then, the /system/bin/sh and the others important executable fails.
-  // Therefore, system crash, then you need to flash system without
-  // this "if (true) ..." to prevent boot correctly.
-  /*
-  if (nht and has_hooked_lib) {
-    load_tasks.push_back(LoadTask::create(nht->get_hooking_lib_name(), start_with));
-    ++library_names_count;
-    DL_WARN("[NATIVE HOOK] PUSHED hooking_lib, full %s : base %s\n", nht->get_hooking_lib_name(), basename(nht->get_hooking_lib_name()));
-  }
-  */
 
   // Construct global_group.
   // Seems like a link_list of the main executable, LD_PRELOADs
