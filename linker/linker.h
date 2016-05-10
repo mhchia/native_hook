@@ -401,53 +401,52 @@ struct soinfo {
   friend soinfo* get_libdl_info();
 };
 
+bool is_the_same_lib(const std::string& a, const std::string& b);
+
 struct SoinfoSymbol
 {
     const std::string lib_name;
+    const std::string symbol;
     soinfo* so;
-    const ElfW(Sym)* symbol;
 
-    SoinfoSymbol(const char* name,
-                 soinfo* so = nullptr,
-                 const ElfW(Sym)* symbol = nullptr) :\
-        lib_name(name), so(so), symbol(symbol) {}
+    SoinfoSymbol(const std::string& name,
+                 const std::string& symbol,
+                 soinfo* so = nullptr) :\
+        lib_name(name), symbol(symbol), so(so) {}
 };
 
 class NativeHookTable
 {
 public:
     NativeHookTable(const std::string& hooked_lib,
+                    const std::string& hooked_symbol,
                     const std::string& hooking_lib,
-                    const std::string& symbol_name) :\
-        hooked_(hooked_lib.c_str()),
-        hooking_(hooking_lib.c_str()),
-        symbol_name_(symbol_name) {}
-
-    void test(const std::string& name, soinfo* so, const ElfW(Sym)* s) {
-        if (name != symbol_name_) {
-            return;
-        }
-        std::string lib_name(so->get_realpath());
-        if (hooked_.lib_name == lib_name and hooked_.symbol == nullptr) {
-            hooked_.so = so;
-            hooked_.symbol = s;
-        }
-        if (hooking_.lib_name == lib_name and hooking_.symbol == nullptr) {
-            hooking_.so = so;
-            hooking_.symbol = s;
-        }
-    }
-    bool is_target_symbol(const std::string& s)
+                    const std::string& hooking_symbol) :\
+        hooked_(hooked_lib, hooked_symbol),
+        hooking_(hooking_lib, hooking_symbol) {}
+    bool is_hooked_symbol(const std::string& s)
     {
-        return s == symbol_name_;
+        return s == hooked_.symbol;
+    }
+    bool is_hooking_symbol(const std::string& s)
+    {
+        return s == hooking_.symbol;
+    }
+    const char* get_hooked_symbol()
+    {
+        return hooked_.symbol.c_str();
+    }
+    const char* get_hooking_symbol()
+    {
+        return hooking_.symbol.c_str();
     }
     bool is_hooked_lib(soinfo* so)
     {
-        return hooked_.lib_name == so->get_realpath();
+        return is_the_same_lib(hooked_.lib_name, so->get_realpath());
     }
     bool is_hooking_lib(soinfo* so)
     {
-        return hooking_.lib_name == so->get_realpath();
+        return is_the_same_lib(hooking_.lib_name, so->get_realpath());
     }
     const char* get_hooked_lib_name()
     {
@@ -477,7 +476,6 @@ public:
 private:
     SoinfoSymbol hooked_;
     SoinfoSymbol hooking_;
-    const std::string symbol_name_;
 };
 
 bool soinfo_do_lookup(soinfo* si_from, const char* name, const version_info* vi,
@@ -518,4 +516,6 @@ size_t linker_get_error_buffer_size();
 void set_application_target_sdk_version(uint32_t target);
 uint32_t get_application_target_sdk_version();
 bool init_native_hook_table();
+typedef std::vector<std::vector<std::string> > NativeHookFile;
+bool parse_native_hook_file(NativeHookFile& nh_items, const char* nh_file_path="/system/nh_file.txt");
 #endif

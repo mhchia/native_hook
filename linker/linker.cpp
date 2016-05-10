@@ -137,9 +137,6 @@ static r_debug _r_debug =
 
 NativeHookTable* nht = nullptr;
 
-typedef std::vector<std::vector<std::string> > NativeHookFile;
-
-
 static link_map* r_debug_tail = 0;
 
 static void insert_soinfo_into_debug_map(soinfo* info) {
@@ -729,14 +726,24 @@ bool soinfo_do_lookup(soinfo* si_from, const char* name, const version_info* vi,
     global_group.visit([&](soinfo* global_si) {
       DEBUG("%s: looking up %s in %s (from global group)",
           si_from->get_realpath(), name, global_si->get_realpath());
-      if (nht && nht->is_target_symbol(name) && (nht->is_hooked_lib(global_si) || !nht->is_hooking_lib(global_si))) {
+      if (nht && nht->is_hooked_symbol(name)) {
+        if (nht->is_hooked_lib(global_si) || !nht->is_hooking_lib(global_si)) {
           DL_WARN("[SKIPPED BY NATIVE HOOK] %s: looking up %s in %s (from global group)",
               si_from->get_realpath(), name, global_si->get_realpath());
           return true;
+        }
       }
-      if (!global_si->find_symbol_by_name(symbol_name, vi, &s)) {
-        error = true;
-        return false;
+      if (nht && nht->is_hooked_symbol(name) && nht->is_hooking_lib(global_si)) {
+        SymbolName hooking_symbol(nht->get_hooking_symbol());
+        if (!global_si->find_symbol_by_name(hooking_symbol, vi, &s)) {
+          error = true;
+          return false;
+        }
+      } else {
+        if (!global_si->find_symbol_by_name(symbol_name, vi, &s)) {
+          error = true;
+          return false;
+        }
       }
 
       if (s != nullptr) {
@@ -764,14 +771,24 @@ bool soinfo_do_lookup(soinfo* si_from, const char* name, const version_info* vi,
 
       DEBUG("%s: looking up %s in %s (from local group)",
           si_from->get_realpath(), name, local_si->get_realpath());
-      if (nht && nht->is_target_symbol(name) && (nht->is_hooked_lib(local_si) || !nht->is_hooking_lib(local_si))) {
+      if (nht && nht->is_hooked_symbol(name)) {
+        if (nht->is_hooked_lib(local_si) || !nht->is_hooking_lib(local_si)) {
           DL_WARN("[SKIPPED BY NATIVE HOOK] %s: looking up %s in %s (from local group)",
               si_from->get_realpath(), name, local_si->get_realpath());
           return true;
+        }
       }
-      if (!local_si->find_symbol_by_name(symbol_name, vi, &s)) {
-        error = true;
-        return false;
+      if (nht && nht->is_hooked_symbol(name) && nht->is_hooking_lib(local_si)) {
+        SymbolName hooking_symbol(nht->get_hooking_symbol());
+        if (!local_si->find_symbol_by_name(hooking_symbol, vi, &s)) {
+          error = true;
+          return false;
+        }
+      } else {
+        if (!local_si->find_symbol_by_name(symbol_name, vi, &s)) {
+          error = true;
+          return false;
+        }
       }
 
       if (s != nullptr) {
@@ -1524,11 +1541,12 @@ static bool find_libraries(soinfo* start_with, const char* const library_names[]
       task.get() != nullptr; task.reset(load_tasks.pop_front())) {
     // load_tasks passed to find_library_internal, load_libraries,
     // and will be pushed all dt_needed .so in BFS order.
-    DL_WARN("[NATIVE HOOK] %s : loading lib %s\n", __func__, task->get_name());
     soinfo* si = find_library_internal(load_tasks, task->get_name(), rtld_flags, extinfo);
     if (si == nullptr) {
       return false;
     }
+
+//    DL_WARN("[NATIVE HOOK] PRINT PATH %s\n", si->get_realpath());
 
     soinfo* needed_by = task->get_needed_by();
     if (needed_by != nullptr) {
@@ -1547,7 +1565,8 @@ static bool find_libraries(soinfo* start_with, const char* const library_names[]
     } else {
       DL_WARN("[NATIVE HOOK] nht is null, task_name=%s\n", task->get_name());
     }
-    if (nht && (std::string(basename(task->get_name())) == basename(nht->get_hooked_lib_name()))) {
+    // Except for libdl.so, all soinfo::get_realpath() returns absolute path
+    if (nht && is_the_same_lib(si->get_realpath(), nht->get_hooked_lib_name())) {
       DL_WARN("[NATIVE HOOK] %s : in nht checking:)\n", __func__);
       soinfo* so_hooking_lib = find_library_internal(load_tasks, nht->get_hooking_lib_name(), rtld_flags, extinfo);
       if (so_hooking_lib) {
@@ -3238,8 +3257,8 @@ static void init_linker_info_for_gdb(ElfW(Addr) linker_base) {
 
 /*
  *  the content in nh_file(native_hook_file) must has the format of:
- *  {hooked_lib1}:{hooking_lib1}:{symbol_name1}
- *  {hooked_lib2}:{hooking_lib2}:{symbol_name2}
+ *  {hooked_lib1}:{hooked_symbol}:{hooking_lib1}:{hooking_symbol1}
+ *  {hooked_lib2}:{hooked_symbol}:{hooking_lib2}:{hooking_symbol2}
  *
  *  each hooking in a single line.
  *  Else, errors occur and native hook fails.
@@ -3247,8 +3266,7 @@ static void init_linker_info_for_gdb(ElfW(Addr) linker_base) {
  *  e.g.
  * /system/lib/libhaha.so:/system/lib/libhook.so:print_native_hook
  */
-bool parse_native_hook_file(NativeHookFile& nh_items,
-                            const char* nh_file_path="/system/nh_file.txt")
+bool parse_native_hook_file(NativeHookFile& nh_items, const char* nh_file_path)
 {
   char buf[PATH_MAX];
   int fd = open(nh_file_path, O_RDONLY);
@@ -3275,7 +3293,8 @@ bool parse_native_hook_file(NativeHookFile& nh_items,
       temp.push_back(pch);
       pch = strtok(NULL, ":");
     }
-    if (temp.size() != 3) {
+    // hooked_lib:hooked_symbol:hooking_lib:hooking_symbol
+    if (temp.size() != 4) {
       DL_WARN("[NATIVE HOOK] %s : %uth line in nh_file is not complete thus skipped.\n", __func__, i);
       continue;
     }
@@ -3285,6 +3304,13 @@ bool parse_native_hook_file(NativeHookFile& nh_items,
   close(fd);
 
   return (nh_items.size() > 0);
+}
+
+// XXX : how to decide two libraries are the same ?
+// workaround : all looking at the basename
+bool is_the_same_lib(const std::string& a, const std::string& b)
+{
+    return std::string(basename(a.c_str())) == basename(b.c_str());
 }
 
 bool init_native_hook_table()
@@ -3304,10 +3330,11 @@ bool init_native_hook_table()
   // TODO: now we only provide one-to-one function hook.
   std::vector<std::string> first = nh_items[0];
   const char* hooked_lib = first[0].c_str();
-  const char* hooking_lib = first[1].c_str();
-  const char* symbol = first[2].c_str();
+  const char* hooked_symbol = first[1].c_str();
+  const char* hooking_lib = first[2].c_str();
+  const char* hooking_symbol = first[3].c_str();
 
-  // TODO : if symbol not in hooked_lib, nht should be nullptr.
+  // TODO : if symbol not in hooking_lib, nht should be nullptr.
   // Otherwise, if libhook is loaded first, symbol in libhook counts,
   // and the symbol in libhaha will be ignored in global symbol table.
   off64_t file_offset;
@@ -3330,7 +3357,7 @@ bool init_native_hook_table()
     return false;
   }
 
-  nht = new NativeHookTable(hooked_lib, hooking_lib, symbol);
+  nht = new NativeHookTable(hooked_lib, hooked_symbol, hooking_lib, hooking_symbol);
   return true;
 }
 

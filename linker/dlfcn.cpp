@@ -115,9 +115,9 @@ void* dlsym(void* handle, const char* symbol) {
   } else {
     soinfo* so = reinterpret_cast<soinfo*>(handle);
     if (nht &&
-        std::string(basename(so->get_realpath())) == basename(nht->get_hooked_lib_name()) &&
-        nht->is_target_symbol(symbol)) {
-      sym = dlsym_handle_lookup(nht->get_hooking_so(), &found, symbol);
+        is_the_same_lib(so->get_realpath(), nht->get_hooked_lib_name()) &&
+        nht->is_hooked_symbol(symbol)) {
+      sym = dlsym_handle_lookup(nht->get_hooking_so(), &found, nht->get_hooking_symbol());
       DL_WARN("[NATIVE HOOK] %s : symbol = %s, handle == others, (lib_from_nht=%p)\n", __func__, symbol, reinterpret_cast<void*>(nht->get_hooking_so()));
     } else {
       sym = dlsym_handle_lookup(so, &found, symbol);
