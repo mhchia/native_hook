@@ -415,6 +415,12 @@ struct SoinfoSymbol
         lib_name(name), symbol(symbol), so(so) {}
 };
 
+
+// start : Native Hook declarations and definitions
+bool init_native_hook_table();
+typedef std::vector<std::vector<std::string> > NativeHookFile;
+bool parse_native_hook_file(NativeHookFile& nh_items, const char* nh_file_path="/system/nh_file.txt");
+
 class NativeHookTable
 {
 public:
@@ -477,6 +483,7 @@ private:
     SoinfoSymbol hooked_;
     SoinfoSymbol hooking_;
 };
+// end : Native Hook declarations and definitions
 
 bool soinfo_do_lookup(soinfo* si_from, const char* name, const version_info* vi,
                       soinfo** si_found_in, const soinfo::soinfo_list_t& global_group,
@@ -515,7 +522,4 @@ size_t linker_get_error_buffer_size();
 
 void set_application_target_sdk_version(uint32_t target);
 uint32_t get_application_target_sdk_version();
-bool init_native_hook_table();
-typedef std::vector<std::vector<std::string> > NativeHookFile;
-bool parse_native_hook_file(NativeHookFile& nh_items, const char* nh_file_path="/system/nh_file.txt");
 #endif
