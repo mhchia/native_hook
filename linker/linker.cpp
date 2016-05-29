@@ -3264,20 +3264,21 @@ static void init_linker_info_for_gdb(ElfW(Addr) linker_base) {
  *  Else, errors occur and native hook fails.
  *
  *  e.g.
- * /system/lib/libhaha.so:/system/lib/libhook.so:print_native_hook
+ * /system/lib/libhaha.so:print_haha:/system/lib/libhook.so:print_native_hook
  */
 bool parse_native_hook_file(NativeHookFile& nh_items, const char* nh_file_path)
 {
-  char buf[PATH_MAX];
+  char buf[PATH_MAX * 4 * 10];  // assume that 10 lines of hooking mappings
   int fd = open(nh_file_path, O_RDONLY);
   if (fd == -1) {
+    DL_WARN("[NATIVE HOOK] open %s failed, native hook disabled\n", nh_file_path);
     return false;
   }
   size_t bytes = read(fd, buf, sizeof(buf) - 1);
   buf[bytes] = '\0';
 
   size_t num_lines = 0;
-  char* lines[PATH_MAX];
+  char* lines[PATH_MAX * 4];
 
   char* pch;
   pch = strtok(buf, "\n");
@@ -3288,6 +3289,10 @@ bool parse_native_hook_file(NativeHookFile& nh_items, const char* nh_file_path)
 
   for (size_t i = 0; i < num_lines; ++i) {
     std::vector<std::string> temp;
+    // skip annotated lines
+    if (strlen(lines[i]) != 0 && lines[i][0] == '#') {
+        continue;
+    }
     pch = strtok(lines[i], ":");
     while (pch != NULL) {
       temp.push_back(pch);
