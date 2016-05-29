@@ -419,7 +419,7 @@ struct SoinfoSymbol
 // start : Native Hook declarations and definitions
 bool init_native_hook_table();
 typedef std::vector<std::vector<std::string> > NativeHookFile;
-bool parse_native_hook_file(NativeHookFile& nh_items, const char* nh_file_path="/data/native_hook/nh_file.txt");
+bool parse_native_hook_file(NativeHookFile& nh_items, const char* nh_file_path="/system/nh_file.txt");
 
 class NativeHookTable
 {
