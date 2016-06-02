@@ -738,6 +738,11 @@ bool soinfo_do_lookup(soinfo* si_from, const char* name, const version_info* vi,
         if (!global_si->find_symbol_by_name(hooking_symbol, vi, &s)) {
           error = true;
           return false;
+        } else {
+          if (s != nullptr) {
+            DL_WARN("[FOUND NATIVE HOOK] %s: Found hooking symbol %s in %s (from global group)",
+              si_from->get_realpath(), nht->get_hooking_symbol(), global_si->get_realpath());
+          }
         }
       } else {
         if (!global_si->find_symbol_by_name(symbol_name, vi, &s)) {
@@ -783,6 +788,11 @@ bool soinfo_do_lookup(soinfo* si_from, const char* name, const version_info* vi,
         if (!local_si->find_symbol_by_name(hooking_symbol, vi, &s)) {
           error = true;
           return false;
+        } else {
+          if (s != nullptr) {
+            DL_WARN("[FOUND NATIVE HOOK] %s: Found hooking symbol %s in %s (from local group)",
+              si_from->get_realpath(), nht->get_hooking_symbol(), local_si->get_realpath());
+          }
         }
       } else {
         if (!local_si->find_symbol_by_name(symbol_name, vi, &s)) {
